@@ -115,7 +115,7 @@ class ProjectLogger(Logger):
 
     self.log_rate = log_rate
     self.log_when = when.Every(log_rate)
-    step = counter.Counter(1) # base Logger expects step in advance of write
+    step = counter.Counter()
     self.episodes_done = int(step)
 
     outputs = []
@@ -232,12 +232,16 @@ class JSONLOutput(AsyncOutput):
     super().__init__(self._write, parallel)
     self._pattern = re.compile(pattern)
     self._strings = strings
-    logdir = path.Path(logdir)
-    logdir.mkdir()
-    self._filename = logdir / filename
+    self.path_created = False
+    self.given_filename = filename
+    self.given_logdir = logdir
 
   @timer.section('jsonl')
   def _write(self, summaries):
+    if not self.path_created:
+      logdir = path.Path(self.given_logdir)
+      logdir.mkdir()
+      self._filename = logdir / self.given_filename
     bystep = collections.defaultdict(dict)
     for step, name, value in summaries:
       if not self._pattern.search(name):
