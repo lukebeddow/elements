@@ -8,10 +8,7 @@ import time
 
 import numpy as np
 
-from . import path
-from . import printing
-from . import timer
-
+from repos.elements.elements import path, printing, timer, when, counter
 
 class Logger:
 
@@ -85,6 +82,68 @@ class Logger:
           output.wait()
         except Exception as e:
           print(f'Error waiting on output: {e}')
+
+class ProjectLogger(Logger):
+
+  def __init__(self, log_rate, log_to_wandb=True, log_to_terminal=True, 
+               log_to_JSON=True, wandb_instance=None, json_logdir="./",
+               json_filename="metrics.jsonl"):
+    """
+    Logger that has multiple output streams:
+      - terminal
+      - weights and biases (wandb) [requires wandb_instance]
+      - JSON files [requires logdir]
+
+    Output streams are logged to at a specified log rate.
+
+    Use this logger as follows:
+
+    # initialise
+    logger = ProjectLogger(...)
+
+    # log data after every episode/training step
+    logger.scalar('foo', 42)
+    logger.scalar('foo', 43)
+    logger.scalar('foo', 44)
+    logger.vector('vector', np.zeros(100))
+    logger.image('image', np.zeros((800, 600, 3, np.uint8)))
+    logger.video('video', np.zeros((100, 64, 64, 3, np.uint8)))
+    logger.log_step()
+
+    For more see: https://github.com/danijar/elements
+    """
+
+    self.log_rate = log_rate
+    self.log_when = when.Every(log_rate)
+    step = counter.Counter(1) # base Logger expects step in advance of write
+    self.episodes_done = int(step)
+
+    outputs = []
+
+    if log_to_terminal:
+      outputs.append(TerminalOutput())
+    
+    if log_to_wandb:
+      if wandb_instance == None:
+        print("ProjectLogger.__init__() error: log_to_wandb=True, but no wandb instance given. wandb logging disabled")
+      else:
+        outputs.append(WandBOutput(wandb_instance))
+
+    if log_to_JSON:
+      outputs.append(JSONLOutput(json_logdir, json_filename))
+
+    if len(outputs) == 0:
+      print("ProjectLogger.__init__() error: log_to_wandb, log_to_JSON, log_to_terminal are ALL False, nothing will be logged")
+
+    super().__init__(step, outputs)
+
+  def log_step(self):
+    """
+    Triggers a write action at the specified log rate, and increments the count of episodes done
+    """
+    if self.log_when(self.episodes_done): self.write()
+    self.step.increment()
+    self.episodes_done = int(self.step)
 
 
 class AsyncOutput:
@@ -292,11 +351,13 @@ class TensorBoardOutput(AsyncOutput):
 
 class WandBOutput:
 
-  def __init__(self, name, pattern=r'.*', **kwargs):
+  def __init__(self, wandb_instance=None, pattern=r'.*', **kwargs):
     self._pattern = re.compile(pattern)
-    import wandb
-    wandb.init(name=name, **kwargs)
-    self._wandb = wandb
+    if wandb_instance is None:
+      import wandb
+      wandb.init(**kwargs)
+      self._wandb = wandb
+    else: self._wandb = wandb_instance
 
   def __call__(self, summaries):
     bystep = collections.defaultdict(dict)
